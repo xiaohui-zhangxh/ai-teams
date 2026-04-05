@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_lib.sh"
+
+SCRIPT_NAME="$(basename "$0")"
+CLI_COMMAND="${SCRIPT_NAME%-as}"
+LOCALE="$(ai_teams_locale)"
+
+show_menu() {
+  local locale="$1"
+  local roles_dir="$_AI_TEAMS_ROLES_DIR/$locale"
+  local files=() names=()
+
+  while IFS= read -r file; do
+    [ -f "$file" ] || continue
+    local role_name fallback_name relative_path group_label display_name
+    role_name=$(head -n 5 "$file" | grep '^# ' | head -1 | sed 's/^# //')
+    if [ -z "$role_name" ]; then
+      fallback_name="$(basename "$file" .md | sed -E 's/^[0-9]{2}[-_. ]*//')"
+      role_name="$fallback_name"
+    fi
+
+    relative_path="${file#$roles_dir/}"
+    group_label="$(dirname "$relative_path")"
+    display_name="$role_name"
+    if [ "$group_label" != "." ]; then
+      group_label="$(printf '%s' "$group_label" | sed -E 's#(^|/)[0-9]{2}[-_. ]*#\1#g; s#/# / #g')"
+      display_name="${group_label} / ${role_name}"
+    fi
+
+    files+=("$file")
+    names+=("$display_name")
+  done < <(find "$roles_dir" -type f -name '*.md' | LC_ALL=C sort)
+
+  if [ ${#files[@]} -eq 0 ]; then
+    echo "No roles found in $roles_dir"
+    exit 1
+  fi
+
+  local locales
+  locales=($(ai_teams_available_locales))
+
+  echo ""
+  echo "🤖 AI Teams (via $CLI_COMMAND) [$locale]"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  for i in "${!names[@]}"; do
+    printf "  %d) %s\n" $((i + 1)) "${names[$i]}"
+  done
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  if [ ${#locales[@]} -gt 1 ]; then
+    local other_locales=()
+    for l in "${locales[@]}"; do
+      [ "$l" != "$locale" ] && other_locales+=("$l")
+    done
+    echo "  L) 切换语言 / Switch language → ${other_locales[*]}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  fi
+
+  echo ""
+  read -rp "> " choice
+
+  if [[ "$choice" =~ ^[Ll]$ ]]; then
+    echo ""
+    echo "Available languages:"
+    for i in "${!locales[@]}"; do
+      printf "  %d) %s\n" $((i + 1)) "${locales[$i]}"
+    done
+    echo ""
+    read -rp "> " lang_choice
+    if [[ "$lang_choice" =~ ^[0-9]+$ ]] && [ "$lang_choice" -ge 1 ] && [ "$lang_choice" -le ${#locales[@]} ]; then
+      LOCALE="${locales[$((lang_choice - 1))]}"
+      show_menu "$LOCALE"
+      return
+    else
+      echo "Invalid choice"
+      exit 1
+    fi
+  fi
+
+  if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#files[@]} ]; then
+    echo "Invalid choice"
+    exit 1
+  fi
+
+  local selected="${files[$((choice - 1))]}"
+  local selected_name="${names[$((choice - 1))]}"
+
+  echo ""
+  echo "▶ ${selected_name} (via $CLI_COMMAND)"
+  echo ""
+
+  exec "$CLI_COMMAND" "$(cat "$selected")"
+}
+
+show_menu "$LOCALE"
